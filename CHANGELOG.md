@@ -11,6 +11,7 @@
 - **镜像测试工具**: `test_github_mirrors.sh` 支持 URL 模板、gzip 完整性校验及 `--print-urls` 预览模式。
 - **文件加速节点更新**: 内置镜像切换为 gh-proxy.com、ghproxy.net、ghproxy.homeboyc.cn、github.akams.cn、ghp.ci、github.moeyy.xyz、toolwa.com 等文件加速型服务。
 - **弱网下载增强**: 默认超时提升至 600 秒，curl/wget 支持断点续传，降低 ARM64/大文件下到一半超时失败的概率。
+- **规避 HTTP/2 中断**: 下载强制 `--http1.1`，并启用 `--retry-all-errors`，修复 `curl: (18) HTTP/2 stream was not closed cleanly`。
 
 ### 🐛 修复问题 (Fixed)
 - **修复镜像 URL 拼接**: 不再将 `https://github.com/...` 去掉协议后与镜像地址硬拼，避免部分镜像生成无效路径。

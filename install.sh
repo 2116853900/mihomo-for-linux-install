@@ -207,7 +207,8 @@ download_file() {
             fi
 
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-                if curl -fL -C - --retry 2 --retry-delay 2 --connect-timeout "${CONNECT_TIMEOUT:-30}" \
+                if curl -fL -C - --http1.1 --retry 3 --retry-delay 2 --retry-all-errors \
+                    --connect-timeout "${CONNECT_TIMEOUT:-30}" \
                     --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
                     --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$try_url"; then
                     if validate_download "$temp_output" "$output"; then

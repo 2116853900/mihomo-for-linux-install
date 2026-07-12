@@ -273,8 +273,9 @@ download_file() {
 
         for ((i = 1; i <= max_attempts; i++)); do
             log_info "下载尝试 ($i/$max_attempts): $(basename "$output")"
-            # -C - 断点续传；超时后保留 .part 以便同镜像重试续传
-            if curl -fL -C - --retry 2 --retry-delay 2 --connect-timeout "${CONNECT_TIMEOUT:-30}" \
+            # -C - 断点续传；强制 HTTP/1.1 规避 HTTP/2 stream 中断 (curl 18)
+            if curl -fL -C - --http1.1 --retry 3 --retry-delay 2 --retry-all-errors \
+                --connect-timeout "${CONNECT_TIMEOUT:-30}" \
                 --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
                 --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$download_url"; then
                 if validate_download "$temp_output" "$output"; then

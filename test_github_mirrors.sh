@@ -107,7 +107,8 @@ test_download_speed() {
     fi
 
     start_time=$(date +%s)
-    if curl -fL --connect-timeout "$CONNECT_TIMEOUT" --max-time "$DOWNLOAD_TIMEOUT" \
+    if curl -fL -C - --http1.1 --retry 2 --retry-delay 1 --retry-all-errors \
+        --connect-timeout "$CONNECT_TIMEOUT" --max-time "$DOWNLOAD_TIMEOUT" \
         --silent --show-error -o "$temp_file" "$download_url"; then
         end_time=$(date +%s)
         duration=$((end_time - start_time))
