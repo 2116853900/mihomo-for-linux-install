@@ -625,7 +625,19 @@ rules:
   - MATCH,PROXY
 EOF
     fi
-    
+
+    # 写入 resources.conf，供 frontend_manager.sh (clashfrontend) source 使用。
+    # 不存在则 frontend_manager.sh 会因缺少配置变量而崩溃。
+    {
+        echo "# 由 quick_install.sh 自动生成，供 clashfrontend 使用"
+        echo "# 前端下载地址与版本"
+        echo "METACUBEXD_DOWNLOAD_URL=\"https://github.com/MetaCubeX/metacubexd/releases/download/v1.189.0/compressed-dist.tgz\""
+        echo "METACUBEXD_VERSION=\"1.189.0\""
+        echo "ZASHBOARD_DOWNLOAD_URL=\"https://github.com/Zephyruso/zashboard/releases/latest/download/dist-cdn-fonts.zip\""
+        echo "ZASHBOARD_VERSION=\"latest\""
+    } > /etc/mihomo/resources.conf
+    log_success "frontend_manager 配置已写入 /etc/mihomo/resources.conf"
+
     # 创建 systemd 服务
     cat > /etc/systemd/system/mihomo.service << 'EOF'
 [Unit]
