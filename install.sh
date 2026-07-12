@@ -66,51 +66,188 @@ is_valid_file() {
     return 0
 }
 
-# 从 GitHub 下载文件（支持镜像加速）
+# 每个镜像条目使用 {url} 作为完整原始 GitHub HTTPS URL 的占位符。
+# GITHUB_MIRRORS 环境变量可用逗号分隔的模板覆盖 resources.conf 中的 MIRRORS。
+get_github_mirrors() {
+    local configured_mirror
+
+    if [ -n "${GITHUB_MIRRORS:-}" ]; then
+        while IFS= read -r configured_mirror; do
+            [ -n "$configured_mirror" ] && printf '%s\n' "$configured_mirror"
+        done < <(printf '%s' "$GITHUB_MIRRORS" | tr ',' '\n')
+        return 0
+    fi
+
+    if declare -p MIRRORS >/dev/null 2>&1; then
+        printf '%s\n' "${MIRRORS[@]}"
+    fi
+}
+
+build_download_url() {
+    local template=$1
+    local original_url=$2
+
+    case "$template" in
+        ""|direct|"{url}")
+            printf '%s\n' "$original_url"
+            ;;
+        *"{url}"*)
+            printf '%s\n' "${template//\{url\}/$original_url}"
+            ;;
+        *)
+            # 兼容历史上的纯前缀配置。
+            printf '%s/%s\n' "${template%/}" "$original_url"
+            ;;
+    esac
+}
+
+get_file_size() {
+    stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0
+}
+
+validate_download() {
+    local candidate=$1
+    local target_path=$2
+    local minimum_size=${MIN_FILE_SIZE:-1024}
+    local file_size
+    local file_type=""
+
+    if [ ! -f "$candidate" ]; then
+        return 1
+    fi
+
+    file_size=$(get_file_size "$candidate")
+    if [ "$file_size" -lt "$minimum_size" ]; then
+        log_warn "下载文件太小 (${file_size} bytes)"
+        return 1
+    fi
+
+    if command -v file >/dev/null 2>&1; then
+        file_type=$(file -b -- "$candidate" 2>/dev/null || true)
+        if printf '%s\n' "$file_type" | grep -Eqi 'HTML|XML'; then
+            log_warn "下载结果是错误页面 ($file_type)"
+            return 1
+        fi
+
+        case "$target_path" in
+            *.sh)
+                ;;
+            *)
+                if printf '%s\n' "$file_type" | grep -Eqi 'text'; then
+                    log_warn "下载结果不是预期的二进制或压缩包 ($file_type)"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
+
+    case "$target_path" in
+        *.tgz|*.tar.gz)
+            tar -tzf "$candidate" >/dev/null 2>&1 || return 1
+            ;;
+        *.gz)
+            gzip -t "$candidate" >/dev/null 2>&1 || return 1
+            ;;
+        *.zip)
+            unzip -tqq "$candidate" >/dev/null 2>&1 || return 1
+            ;;
+        *.sh)
+            head -n 1 "$candidate" | grep -q '^#!' || return 1
+            ;;
+    esac
+
+    return 0
+}
+
+add_download_source() {
+    local candidate=$1
+    local existing
+
+    [ -z "$candidate" ] && return 0
+    [ "$candidate" = "direct" ] && candidate="{url}"
+    for existing in "${DOWNLOAD_SOURCES[@]}"; do
+        [ "$existing" = "$candidate" ] && return 0
+    done
+    DOWNLOAD_SOURCES+=("$candidate")
+}
+
+# 从 GitHub 下载文件（支持模板镜像、直连回退和压缩包完整性校验）
 download_file() {
     local url=$1
     local output=$2
     local description=$3
+    local max_attempts=${MAX_RETRY_ATTEMPTS:-2}
+    local mirror
+    local source
+    local try_url
+    local temp_output
+    local file_size
+    local attempt
+    local -a DOWNLOAD_SOURCES=()
 
     log_info "正在下载 ${description:-$url}..."
 
-    # 尝试镜像列表
-    local mirror_urls=()
-    if [ ${#MIRRORS[@]} -gt 0 ]; then
-        for mirror in "${MIRRORS[@]}"; do
-            if [ -n "$mirror" ]; then
-                mirror_urls+=("${mirror}${url}")
+    while IFS= read -r mirror; do
+        add_download_source "$mirror"
+    done < <(get_github_mirrors)
+    add_download_source "{url}"
+
+    if ! temp_output=$(mktemp "${output}.part.XXXXXX"); then
+        log_error "无法创建临时下载文件: $output"
+        return 1
+    fi
+
+    if command -v curl >/dev/null 2>&1; then
+        for source in "${DOWNLOAD_SOURCES[@]}"; do
+            try_url=$(build_download_url "$source" "$url")
+            if [ "$source" = "{url}" ]; then
+                log_info "尝试官方 GitHub 地址下载"
+            else
+                log_info "尝试 GitHub 加速地址: $source"
             fi
+
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+                rm -f "$temp_output"
+                if curl -fL --retry 1 --retry-delay 1 --connect-timeout "${CONNECT_TIMEOUT:-8}" \
+                    --max-time "${DOWNLOAD_TIMEOUT:-120}" --silent --show-error \
+                    --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$try_url"; then
+                    if validate_download "$temp_output" "$output"; then
+                        file_size=$(get_file_size "$temp_output")
+                        mv -f "$temp_output" "$output"
+                        log_success "下载成功: $output (${file_size} bytes)"
+                        return 0
+                    fi
+                    rm -f "$temp_output"
+                    break
+                fi
+                log_warn "下载失败 ($attempt/$max_attempts)，重试中..."
+                sleep "${DOWNLOAD_RETRY_DELAY:-1}"
+            done
         done
     fi
-    # 原始地址作为最后备选
-    mirror_urls+=("$url")
 
-    for try_url in "${mirror_urls[@]}"; do
-        log_info "尝试下载: $try_url"
-        if curl -fSL --connect-timeout "${CONNECT_TIMEOUT:-8}" --max-time "${DOWNLOAD_TIMEOUT:-120}" -o "$output" "$try_url" 2>/dev/null; then
-            if is_valid_file "$output"; then
-                log_success "下载成功: $output"
-                return 0
-            else
-                log_warn "下载的文件无效，尝试下一个镜像..."
-                rm -f "$output"
-            fi
-        fi
-    done
-
-    # 也尝试 wget
-    log_info "curl 下载失败，尝试 wget..."
+    # curl 不可用或所有 curl 下载失败时，再对相同来源使用 wget。
     if command -v wget &>/dev/null; then
-        if wget -q --timeout="${DOWNLOAD_TIMEOUT:-120}" -O "$output" "$url" 2>/dev/null; then
-            if is_valid_file "$output"; then
-                log_success "wget 下载成功: $output"
-                return 0
-            fi
-            rm -f "$output"
-        fi
+        log_info "curl 下载失败，尝试 wget..."
+        for source in "${DOWNLOAD_SOURCES[@]}"; do
+            try_url=$(build_download_url "$source" "$url")
+            for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+                rm -f "$temp_output"
+                if wget -q --timeout="${DOWNLOAD_TIMEOUT:-120}" --tries=1 -O "$temp_output" "$try_url"; then
+                    if validate_download "$temp_output" "$output"; then
+                        file_size=$(get_file_size "$temp_output")
+                        mv -f "$temp_output" "$output"
+                        log_success "wget 下载成功: $output (${file_size} bytes)"
+                        return 0
+                    fi
+                    rm -f "$temp_output"
+                    break
+                fi
+            done
+        done
     fi
 
+    rm -f "$temp_output"
     log_error "下载失败: $description"
     return 1
 }

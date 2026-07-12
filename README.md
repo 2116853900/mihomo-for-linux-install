@@ -17,7 +17,7 @@
 
 ### 技术实现
 
-- **下载优化**: 多镜像源智能选择，支持文件格式验证
+- **下载优化**: 多镜像源智能选择、官方 GitHub 直连回退、临时文件原子替换和压缩包完整性验证
 - **错误处理**: 完善的异常处理和用户反馈机制
 - **系统兼容**: 支持主流 Linux 发行版（Debian、Ubuntu、CentOS、Rocky Linux）
 
@@ -137,14 +137,42 @@ clashfrontend
 - **前端管理器**: 支持前端切换和管理
 
 ### 镜像加速机制
-项目集成了多个 GitHub 镜像服务，按优先级自动选择：
-1. 主要镜像服务
-2. 备用镜像服务
+项目集成多个 **文件加速型** GitHub 镜像，按优先级自动回退：
+1. `gh-proxy.com` / `ghproxy.net` / `ghproxy.homeboyc.cn`
+2. `github.akams.cn` / `ghp.ci` / `github.moeyy.xyz` / `toolwa.com`
 3. 原始 GitHub 地址（最后备选）
+
+默认镜像使用明确的 URL 模板，避免不同加速服务因 URL 拼接规则不同而返回 HTML 错误页。每个模板中的 `{url}` 会替换为完整的原始 GitHub HTTPS 下载地址；即使所有加速服务失败，脚本仍会尝试官方 GitHub 地址。
+
+### 自定义 GitHub 加速地址
+
+镜像服务的可用性会因网络、地区和时间而变化。可在运行安装脚本前通过 `GITHUB_MIRRORS` 临时指定自己的镜像列表，使用逗号分隔的 `{url}` 模板：
+
+```bash
+GITHUB_MIRRORS='https://proxy-a.example/{url},https://proxy-b.example/{url}' \
+  bash quick_install.sh
+```
+
+在线安装时同样适用：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ForLoveIcu/mihomo-for-linux-install/master/quick_install.sh \
+  | GITHUB_MIRRORS='https://proxy-a.example/{url}' bash
+```
+
+不设置该变量时会使用脚本内置的多个加速服务。原始 GitHub 地址始终会自动追加为最后回退，无需写入变量。
+
+可先仅打印脚本生成的下载地址，以检查自定义模板是否正确：
+
+```bash
+./test_github_mirrors.sh --print-urls
+```
 
 ### 文件验证
 - 文件格式检查：确保下载的是正确的二进制文件
 - 文件大小验证：防止下载不完整的文件
+- 压缩包校验：对 `.gz`、`.tgz` 和 `.zip` 执行完整性检查
+- 脚本校验：拒绝没有 shebang 的远程脚本文件
 - 自动重试机制：下载失败时自动切换镜像
 
 ## 故障排除

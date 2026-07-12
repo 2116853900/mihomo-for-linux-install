@@ -2,6 +2,19 @@
 
 本文档记录了项目的所有重要变更和版本发布信息。
 
+## [Unreleased]
+
+### 🔧 改进功能 (Changed)
+- **镜像 URL 模板化**: 统一使用 `{url}` 占位符传递完整 GitHub HTTPS 地址，避免不同加速服务的 URL 拼接规则导致错误页面。
+- **可配置下载来源**: 支持 `GITHUB_MIRRORS` 环境变量临时覆盖内置镜像列表，官方 GitHub 始终保留为最后回退。
+- **可靠下载流程**: 下载先写入临时文件，验证通过后再原子替换目标文件，避免失败或半截文件污染安装目录。
+- **镜像测试工具**: `test_github_mirrors.sh` 支持 URL 模板、gzip 完整性校验及 `--print-urls` 预览模式。
+- **文件加速节点更新**: 内置镜像切换为 gh-proxy.com、ghproxy.net、ghproxy.homeboyc.cn、github.akams.cn、ghp.ci、github.moeyy.xyz、toolwa.com 等文件加速型服务。
+
+### 🐛 修复问题 (Fixed)
+- **修复镜像 URL 拼接**: 不再将 `https://github.com/...` 去掉协议后与镜像地址硬拼，避免部分镜像生成无效路径。
+- **加强文件校验**: 除 HTML/XML 错误页和最小文件大小外，新增 `.gz`、`.tgz`、`.zip` 以及脚本 shebang 校验。
+
 ## [v2.2.1] - 2025-08-07 (开发版)
 
 ### 🔧 改进功能 (Changed)

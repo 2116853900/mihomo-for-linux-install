@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# Mihomo Linux 一键安装脚本 v2.2.2
+# Mihomo Linux 一键安装脚本 v2.2.3
 # 支持多架构、多系统、智能下载、资源配置管理、覆盖安装
 # 项目地址: https://github.com/ForLoveIcu/mihomo-for-linux-install
 
@@ -95,74 +95,209 @@ install_dependencies() {
     esac
 }
 
-# GitHub 加速镜像列表 - 仅包含经过实际测试可用的镜像
+# GitHub 加速镜像列表。
+#
+# 每个条目使用 {url} 作为完整原始 GitHub HTTPS URL 的占位符。例如：
+#   https://gh-proxy.com/{url}
+#
+# 可以通过环境变量覆盖默认列表（逗号分隔）。原始 GitHub 地址始终会作为
+# 最后一个回退来源，例如：
+#   GITHUB_MIRRORS='https://example-proxy/{url},https://another-proxy/{url}' bash quick_install.sh
 get_github_mirrors() {
-    # 经过实际测试确认可用的镜像服务
-    echo "https://ghfast.top/"
-    echo "https://cors.isteed.cc/github.com"
-    echo "https://hub.gitmirror.com/"
-    echo ""  # 原始地址作为最后备选
+    local configured_mirror
+
+    if [ -n "${GITHUB_MIRRORS:-}" ]; then
+        while IFS= read -r configured_mirror; do
+            [ -n "$configured_mirror" ] && printf '%s\n' "$configured_mirror"
+        done < <(printf '%s' "$GITHUB_MIRRORS" | tr ',' '\n')
+        return 0
+    fi
+
+    cat <<'EOF'
+https://gh-proxy.com/{url}
+https://ghproxy.net/{url}
+https://ghproxy.homeboyc.cn/{url}
+https://github.akams.cn/{url}
+https://ghp.ci/{url}
+https://github.moeyy.xyz/{url}
+http://toolwa.com/github/{url}
+EOF
 }
 
-# 智能下载文件 - 支持多镜像加速
+# 根据镜像模板生成下载 URL。兼容旧式前缀配置，但推荐使用 {url} 模板，
+# 以避免将 https://github.com/... 拼接为错误路径。
+build_download_url() {
+    local template=$1
+    local original_url=$2
+
+    case "$template" in
+        ""|direct|"{url}")
+            printf '%s\n' "$original_url"
+            ;;
+        *"{url}"*)
+            printf '%s\n' "${template//\{url\}/$original_url}"
+            ;;
+        *)
+            printf '%s/%s\n' "${template%/}" "$original_url"
+            ;;
+    esac
+}
+
+get_file_size() {
+    stat -c%s "$1" 2>/dev/null || stat -f%z "$1" 2>/dev/null || echo 0
+}
+
+# 验证下载结果，防止镜像返回 HTML 错误页、截断文件或无效压缩包。
+validate_download() {
+    local candidate=$1
+    local target_path=$2
+    local minimum_size=${MIN_FILE_SIZE:-1024}
+    local file_size
+    local file_type=""
+
+    if [ ! -f "$candidate" ]; then
+        log_warn "下载结果不存在"
+        return 1
+    fi
+
+    file_size=$(get_file_size "$candidate")
+    if [ "$file_size" -lt "$minimum_size" ]; then
+        log_warn "下载文件太小 (${file_size} bytes)"
+        return 1
+    fi
+
+    if command -v file >/dev/null 2>&1; then
+        file_type=$(file -b -- "$candidate" 2>/dev/null || true)
+        if printf '%s\n' "$file_type" | grep -Eqi 'HTML|XML'; then
+            log_warn "下载结果是错误页面 ($file_type)"
+            return 1
+        fi
+
+        case "$target_path" in
+            *.sh)
+                ;;
+            *)
+                if printf '%s\n' "$file_type" | grep -Eqi 'text'; then
+                    log_warn "下载结果不是预期的二进制或压缩包 ($file_type)"
+                    return 1
+                fi
+                ;;
+        esac
+    fi
+
+    case "$target_path" in
+        *.tgz|*.tar.gz)
+            if ! tar -tzf "$candidate" >/dev/null 2>&1; then
+                log_warn "下载的 tar.gz 文件无法解压验证"
+                return 1
+            fi
+            ;;
+        *.gz)
+            if ! gzip -t "$candidate" >/dev/null 2>&1; then
+                log_warn "下载的 gzip 文件已损坏或不完整"
+                return 1
+            fi
+            ;;
+        *.zip)
+            if ! unzip -tqq "$candidate" >/dev/null 2>&1; then
+                log_warn "下载的 zip 文件已损坏或不完整"
+                return 1
+            fi
+            ;;
+        *.sh)
+            if ! head -n 1 "$candidate" | grep -q '^#!'; then
+                log_warn "下载的脚本缺少 shebang，已拒绝使用"
+                return 1
+            fi
+            ;;
+    esac
+
+    return 0
+}
+
+# 智能下载文件 - 支持多镜像、原始 GitHub 回退和文件完整性校验。
 download_file() {
     local original_url=$1
     local output=$2
-    local max_attempts=3
+    local max_attempts=${MAX_RETRY_ATTEMPTS:-2}
+    local -a sources=()
+    local mirror
+    local source
+    local known_source
+    local download_url
+    local temp_output
+    local file_size
 
-    # 获取镜像列表
-    local mirrors=($(get_github_mirrors))
-
-    # 遍历每个镜像进行下载尝试
-    for mirror in "${mirrors[@]}"; do
-        local download_url
-        if [ -z "$mirror" ]; then
-            # 空镜像表示使用原始地址
-            download_url="$original_url"
-            log_info "尝试原始地址下载: GitHub.com"
-        else
-            # 使用镜像加速
-            download_url="${mirror}${original_url#https://}"
-            log_info "尝试镜像加速下载: $mirror"
+    while IFS= read -r mirror; do
+        [ -z "$mirror" ] && continue
+        if [ "$mirror" = "direct" ]; then
+            mirror="{url}"
         fi
 
-        # 对每个镜像进行多次重试
-        for i in $(seq 1 $max_attempts); do
+        local duplicate=false
+        for known_source in "${sources[@]}"; do
+            if [ "$known_source" = "$mirror" ]; then
+                duplicate=true
+                break
+            fi
+        done
+        if [ "$duplicate" = false ]; then
+            sources+=("$mirror")
+        fi
+    done < <(get_github_mirrors)
+
+    # 始终保留官方 GitHub 直连作为最后回退。
+    local has_direct=false
+    for known_source in "${sources[@]}"; do
+        if [ "$known_source" = "{url}" ]; then
+            has_direct=true
+            break
+        fi
+    done
+    if [ "$has_direct" = false ]; then
+        sources+=("{url}")
+    fi
+
+    if ! temp_output=$(mktemp "${output}.part.XXXXXX"); then
+        log_error "无法创建临时下载文件: $output"
+        return 1
+    fi
+
+    for source in "${sources[@]}"; do
+        download_url=$(build_download_url "$source" "$original_url")
+        if [ "$source" = "{url}" ]; then
+            log_info "尝试官方 GitHub 地址下载"
+        else
+            log_info "尝试 GitHub 加速地址: $source"
+        fi
+
+        for ((i = 1; i <= max_attempts; i++)); do
+            rm -f "$temp_output"
             log_info "下载尝试 ($i/$max_attempts): $(basename "$output")"
-            if curl -L --connect-timeout 8 --max-time 120 -o "$output" "$download_url" 2>/dev/null; then
-                # 验证下载的文件
-                if [ -f "$output" ]; then
-                    # 检查文件格式
-                    local file_type=$(file "$output" 2>/dev/null || echo "unknown")
-                    if echo "$file_type" | grep -q "HTML\|XML"; then
-                        log_warn "下载的文件格式不正确 ($file_type)，可能是镜像服务问题"
-                        rm -f "$output"
-                        break
-                    fi
-                    # 检查文件大小
-                    local file_size=$(stat -c%s "$output" 2>/dev/null || echo "0")
-                    if [ "$file_size" -lt 100 ]; then
-                        log_warn "下载的文件太小 (${file_size} bytes)，可能不是正确的文件"
-                        rm -f "$output"
-                        break
-                    fi
+            if curl -fL --retry 1 --retry-delay 1 --connect-timeout "${CONNECT_TIMEOUT:-8}" \
+                --max-time "${DOWNLOAD_TIMEOUT:-120}" --silent --show-error \
+                --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$download_url"; then
+                if validate_download "$temp_output" "$output"; then
+                    file_size=$(get_file_size "$temp_output")
+                    mv -f "$temp_output" "$output"
                     log_success "下载成功: $output (${file_size} bytes)"
                     return 0
                 fi
+                # 同一个镜像已经返回错误内容，直接切换下一个来源。
+                rm -f "$temp_output"
+                break
             fi
             log_warn "下载失败，重试中..."
-            sleep 1
+            sleep "${DOWNLOAD_RETRY_DELAY:-1}"
         done
 
-        if [ -z "$mirror" ]; then
-            log_warn "原始地址下载失败"
-        else
-            log_warn "镜像 $mirror 下载失败，尝试下一个镜像..."
-        fi
+        log_warn "下载来源失败，尝试下一个: $source"
     done
 
+    rm -f "$temp_output"
+
     log_error "所有镜像下载失败: $original_url"
-    log_error "请检查网络连接或稍后重试"
+    log_error "可设置 GITHUB_MIRRORS 使用自定义模板，或检查网络、DNS 与防火墙设置"
     return 1
 }
 
