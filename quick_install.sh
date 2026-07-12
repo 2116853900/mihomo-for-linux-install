@@ -395,6 +395,15 @@ EOF
 
 # 前端选择函数
 choose_frontend() {
+    # 支持环境变量 FRONTEND 预选：metacubexd / zashboard，跳过交互菜单。
+    case "${FRONTEND:-}" in
+        metacubexd|zashboard)
+            SELECTED_FRONTEND="${FRONTEND}"
+            log_info "已通过 FRONTEND 环境变量选择: $SELECTED_FRONTEND"
+            return 0
+            ;;
+    esac
+
     echo ""
     echo -e "${CYAN}🎨 选择前端界面${NC}"
     echo -e "${CYAN}================================${NC}"
@@ -411,6 +420,15 @@ choose_frontend() {
     echo "     • 移动端友好，响应式布局"
     echo "     • 基于 Vue 3，性能优秀"
     echo ""
+
+    # 非交互（curl|bash, stdin 非 TTY）时自动使用默认 MetaCubeXD，
+    # 避免菜单闪过即退出 / read 读取到 HTTP 内容导致选错。
+    if [ ! -t 0 ]; then
+        SELECTED_FRONTEND="metacubexd"
+        log_info "非交互模式，自动选择默认前端: MetaCubeXD"
+        log_info "（可用 FRONTEND=metacubexd|zashboard 或在 TTY 中运行自定义）"
+        return 0
+    fi
 
     while true; do
         read -p "请输入选择 [1-2] (默认: 1): " frontend_choice
