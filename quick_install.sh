@@ -382,7 +382,7 @@ if [ -f "/etc/mihomo/frontend_manager.sh" ]; then
     bash /etc/mihomo/frontend_manager.sh "$@"
 else
     echo "❌ 前端管理脚本不存在"
-    echo "请重新安装或手动下载: https://github.com/ForLoveIcu/mihomo-for-linux-install/raw/master/frontend_manager.sh"
+    echo "请重新安装或手动下载: https://github.com/2116853900/mihomo-for-linux-install/raw/master/frontend_manager.sh"
 fi
 EOF
 
@@ -492,17 +492,28 @@ main() {
     fi
 
     # 检查并处理已存在的安装
+    # curl|bash 时 stdin 不是终端，默认自动覆盖；也可 FORCE=1 / -y 强制覆盖
     if [ -f "/opt/mihomo/mihomo" ] || [ -d "/etc/mihomo" ]; then
         log_warn "检测到 Mihomo 已安装。"
-        read -p "是否要覆盖安装？[y/N]: " choice
-        choice=${choice:-N}
+        local choice="N"
+        if [ "${FORCE:-0}" = "1" ] || [ "${1:-}" = "-y" ] || [ "${1:-}" = "--yes" ]; then
+            choice="Y"
+            log_info "已指定 FORCE/-y，自动覆盖安装"
+        elif [ -t 0 ]; then
+            read -p "是否要覆盖安装？[y/N]: " choice
+            choice=${choice:-N}
+        else
+            # 非交互（curl | bash）默认覆盖，避免静默取消导致命令缺失
+            choice="Y"
+            log_info "非交互安装模式，自动覆盖安装"
+        fi
 
         if [[ ! "$choice" =~ ^[Yy]$ ]]; then
             log_info "操作已取消。"
             exit 0
         fi
 
-        if systemctl is-active --quiet mihomo; then
+        if systemctl is-active --quiet mihomo 2>/dev/null; then
             log_info "正在停止现有的 Mihomo 服务..."
             systemctl stop mihomo
         fi
@@ -609,13 +620,16 @@ EOF
 
     log_success "便捷命令已创建: clashon, clashoff, clashstatus, clashlog, clashrestart, clashuninstall, clashfrontend"
 
-    # 下载并安装管理脚本
+    # 下载并安装管理脚本（使用本仓库地址）
     log_info "安装管理脚本..."
-    if download_file "https://github.com/ForLoveIcu/mihomo-for-linux-install/raw/master/uninstall.sh" "/etc/mihomo/uninstall.sh"; then
+    local repo_raw="https://github.com/2116853900/mihomo-for-linux-install/raw/master"
+    if download_file "${repo_raw}/uninstall.sh" "/etc/mihomo/uninstall.sh"; then
         chmod +x /etc/mihomo/uninstall.sh
     fi
-    if download_file "https://github.com/ForLoveIcu/mihomo-for-linux-install/raw/master/frontend_manager.sh" "/etc/mihomo/frontend_manager.sh"; then
+    if download_file "${repo_raw}/frontend_manager.sh" "/etc/mihomo/frontend_manager.sh"; then
         chmod +x /etc/mihomo/frontend_manager.sh
+    else
+        log_warn "frontend_manager.sh 下载失败，clashfrontend 可能不可用"
     fi
     log_success "管理脚本已安装到 /etc/mihomo/"
 
