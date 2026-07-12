@@ -272,10 +272,10 @@ download_file() {
         fi
 
         for ((i = 1; i <= max_attempts; i++)); do
-            rm -f "$temp_output"
             log_info "下载尝试 ($i/$max_attempts): $(basename "$output")"
-            if curl -fL --retry 1 --retry-delay 1 --connect-timeout "${CONNECT_TIMEOUT:-8}" \
-                --max-time "${DOWNLOAD_TIMEOUT:-120}" --silent --show-error \
+            # -C - 断点续传；超时后保留 .part 以便同镜像重试续传
+            if curl -fL -C - --retry 2 --retry-delay 2 --connect-timeout "${CONNECT_TIMEOUT:-30}" \
+                --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
                 --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$download_url"; then
                 if validate_download "$temp_output" "$output"; then
                     file_size=$(get_file_size "$temp_output")
@@ -287,9 +287,11 @@ download_file() {
                 rm -f "$temp_output"
                 break
             fi
-            log_warn "下载失败，重试中..."
-            sleep "${DOWNLOAD_RETRY_DELAY:-1}"
+            log_warn "下载失败，重试中（支持断点续传）..."
+            sleep "${DOWNLOAD_RETRY_DELAY:-2}"
         done
+        # 换镜像前清理半截文件，避免错误内容被续传拼接
+        rm -f "$temp_output"
 
         log_warn "下载来源失败，尝试下一个: $source"
     done

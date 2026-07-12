@@ -207,9 +207,8 @@ download_file() {
             fi
 
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-                rm -f "$temp_output"
-                if curl -fL --retry 1 --retry-delay 1 --connect-timeout "${CONNECT_TIMEOUT:-8}" \
-                    --max-time "${DOWNLOAD_TIMEOUT:-120}" --silent --show-error \
+                if curl -fL -C - --retry 2 --retry-delay 2 --connect-timeout "${CONNECT_TIMEOUT:-30}" \
+                    --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
                     --user-agent "mihomo-for-linux-install/2.2.3" -o "$temp_output" "$try_url"; then
                     if validate_download "$temp_output" "$output"; then
                         file_size=$(get_file_size "$temp_output")
@@ -220,9 +219,10 @@ download_file() {
                     rm -f "$temp_output"
                     break
                 fi
-                log_warn "下载失败 ($attempt/$max_attempts)，重试中..."
-                sleep "${DOWNLOAD_RETRY_DELAY:-1}"
+                log_warn "下载失败 ($attempt/$max_attempts)，重试中（支持断点续传）..."
+                sleep "${DOWNLOAD_RETRY_DELAY:-2}"
             done
+            rm -f "$temp_output"
         done
     fi
 
@@ -232,8 +232,7 @@ download_file() {
         for source in "${DOWNLOAD_SOURCES[@]}"; do
             try_url=$(build_download_url "$source" "$url")
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
-                rm -f "$temp_output"
-                if wget -q --timeout="${DOWNLOAD_TIMEOUT:-120}" --tries=1 -O "$temp_output" "$try_url"; then
+                if wget -q --continue --timeout="${DOWNLOAD_TIMEOUT:-600}" --tries=1 -O "$temp_output" "$try_url"; then
                     if validate_download "$temp_output" "$output"; then
                         file_size=$(get_file_size "$temp_output")
                         mv -f "$temp_output" "$output"
@@ -244,6 +243,7 @@ download_file() {
                     break
                 fi
             done
+            rm -f "$temp_output"
         done
     fi
 

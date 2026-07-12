@@ -41,14 +41,34 @@
 ### 在线安装
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ForLoveIcu/mihomo-for-linux-install/master/quick_install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/2116853900/mihomo-for-linux-install/master/quick_install.sh | bash
+```
+
+GitHub 较慢时可用加速拉取脚本（ARM64 / x86_64 均自动识别）：
+
+```bash
+export DOWNLOAD_TIMEOUT=600
+curl -fsSL https://gh-proxy.com/https://raw.githubusercontent.com/2116853900/mihomo-for-linux-install/master/quick_install.sh | bash
+```
+
+### ARM64 手动下载核心（超时/弱网备用）
+
+```bash
+# aarch64 / arm64 文件名
+FILE=mihomo-linux-arm64-v1.19.12.gz
+URL=https://github.com/MetaCubeX/mihomo/releases/download/v1.19.12/$FILE
+
+# 断点续传下载（可换 ghproxy.net / github.akams.cn 等镜像）
+curl -fL -C - --connect-timeout 30 --max-time 0 \
+  -o "/tmp/$FILE" \
+  "https://gh-proxy.com/https://github.com/MetaCubeX/mihomo/releases/download/v1.19.12/$FILE"
 ```
 
 ### 离线安装
 
 1. 下载项目文件
 ```bash
-git clone https://github.com/ForLoveIcu/mihomo-for-linux-install.git
+git clone https://github.com/2116853900/mihomo-for-linux-install.git
 cd mihomo-for-linux-install
 ```
 

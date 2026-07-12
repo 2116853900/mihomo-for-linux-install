@@ -17,8 +17,8 @@ log_warn() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 log_error() { echo -e "${RED}[ERROR]${NC} $1"; }
 
 TEST_URL="${TEST_URL:-https://github.com/MetaCubeX/mihomo/releases/latest/download/mihomo-linux-amd64-compatible-v1.gz}"
-CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-8}"
-DOWNLOAD_TIMEOUT="${DOWNLOAD_TIMEOUT:-120}"
+CONNECT_TIMEOUT="${CONNECT_TIMEOUT:-30}"
+DOWNLOAD_TIMEOUT="${DOWNLOAD_TIMEOUT:-600}"
 
 # 每个模板中的 {url} 会被替换为完整的原始 GitHub HTTPS URL。
 get_github_mirrors() {
