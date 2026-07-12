@@ -207,6 +207,7 @@ download_file() {
             fi
 
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+                : > "$temp_output"
                 if curl -fL -C - --http1.1 --retry 3 --retry-delay 2 --retry-all-errors \
                     --connect-timeout "${CONNECT_TIMEOUT:-30}" \
                     --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
@@ -220,7 +221,9 @@ download_file() {
                     rm -f "$temp_output"
                     break
                 fi
-                log_warn "下载失败 ($attempt/$max_attempts)，重试中（支持断点续传）..."
+                # curl 失败：清空半截文件，避免下次 -C - 错误续传（很多镜像忽略 Range）。
+                : > "$temp_output"
+                log_warn "下载失败 ($attempt/$max_attempts)，重试中（将全量重新下载）..."
                 sleep "${DOWNLOAD_RETRY_DELAY:-2}"
             done
             rm -f "$temp_output"
@@ -233,6 +236,7 @@ download_file() {
         for source in "${DOWNLOAD_SOURCES[@]}"; do
             try_url=$(build_download_url "$source" "$url")
             for ((attempt = 1; attempt <= max_attempts; attempt++)); do
+                : > "$temp_output"
                 if wget -q --continue --timeout="${DOWNLOAD_TIMEOUT:-600}" --tries=1 -O "$temp_output" "$try_url"; then
                     if validate_download "$temp_output" "$output"; then
                         file_size=$(get_file_size "$temp_output")
@@ -243,6 +247,7 @@ download_file() {
                     rm -f "$temp_output"
                     break
                 fi
+                : > "$temp_output"
             done
             rm -f "$temp_output"
         done
@@ -355,7 +360,16 @@ if ! is_valid_file "$DistFile1"; then
     download_url="${MIHOMO_DOWNLOAD_URL:-https://github.com/MetaCubeX/mihomo/releases/download/${MIHOMO_VERSION:-v1.19.12}}/$download_name"
     mkdir -p binaries
     DistFile1="binaries/$download_name"
-    download_file "$download_url" "$DistFile1" "mihomo 核心"
+
+    # 扫描 /tmp 是否有已下载完整的 mihomo.gz，避免重复下载。
+    if [ -f "/tmp/mihomo.gz" ] && gzip -t "/tmp/mihomo.gz" >/dev/null 2>&1; then
+        cp -f "/tmp/mihomo.gz" "$DistFile1"
+        log_success "复用已有完整文件: /tmp/mihomo.gz ($(stat -c%s /tmp/mihomo.gz 2>/dev/null) bytes)，跳过下载"
+    fi
+
+    if ! is_valid_file "$DistFile1"; then
+        download_file "$download_url" "$DistFile1" "mihomo 核心"
+    fi
 fi
 
 # 检查并下载 WebUI 文件

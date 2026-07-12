@@ -273,7 +273,9 @@ download_file() {
 
         for ((i = 1; i <= max_attempts; i++)); do
             log_info "下载尝试 ($i/$max_attempts): $(basename "$output")"
-            # -C - 断点续传；强制 HTTP/1.1 规避 HTTP/2 stream 中断 (curl 18)
+            # 强制 HTTP/1.1 规避 HTTP/2 stream 中断 (curl 18)；
+            # -C - 断点续传，但部分镜像不支持 Range，若续传返回完整正文会导致内容拼接损坏，
+            # 因此每次重试前先清空 temp_output，确保 -C - 退化为全量下载。
             if curl -fL -C - --http1.1 --retry 3 --retry-delay 2 --retry-all-errors \
                 --connect-timeout "${CONNECT_TIMEOUT:-30}" \
                 --max-time "${DOWNLOAD_TIMEOUT:-600}" --silent --show-error \
@@ -284,14 +286,16 @@ download_file() {
                     log_success "下载成功: $output (${file_size} bytes)"
                     return 0
                 fi
-                # 同一个镜像已经返回错误内容，直接切换下一个来源。
+                # 校验失败：镜像返回错误内容，直接切换下一个来源。
                 rm -f "$temp_output"
                 break
             fi
-            log_warn "下载失败，重试中（支持断点续传）..."
+            # curl 失败（如 transfer closed）：清空半截文件，避免下次 -C - 错误续传。
+            rm -f "$temp_output"
+            log_warn "下载失败，重试中（将全量重新下载）..."
             sleep "${DOWNLOAD_RETRY_DELAY:-2}"
         done
-        # 换镜像前清理半截文件，避免错误内容被续传拼接
+        # 换镜像前再次清理，确保无残留半截文件。
         rm -f "$temp_output"
 
         log_warn "下载来源失败，尝试下一个: $source"
@@ -541,11 +545,24 @@ main() {
 
     # 下载 Mihomo 核心
     local mihomo_url="${MIHOMO_BASE_URL}/${arch_file}"
+    local mihomo_gz="/tmp/mihomo.gz"
     log_info "下载地址: $mihomo_url"
-    download_file "$mihomo_url" "/tmp/mihomo.gz"
-    
+
+    # 扫描 /tmp 是否存在之前下载且完整的 mihomo.gz，避免重复下载。
+    if [ -f "$mihomo_gz" ]; then
+        if validate_download "$mihomo_gz" "$mihomo_gz"; then
+            log_success "复用已有完整文件: $mihomo_gz ($(get_file_size "$mihomo_gz") bytes)，跳过下载"
+        else
+            log_warn "检测到 $mihomo_gz 但校验不通过，将重新下载"
+            rm -f "$mihomo_gz"
+            download_file "$mihomo_url" "$mihomo_gz"
+        fi
+    else
+        download_file "$mihomo_url" "$mihomo_gz"
+    fi
+
     # 解压并安装
-    gunzip -c /tmp/mihomo.gz > /opt/mihomo/mihomo
+    gunzip -c "$mihomo_gz" > /opt/mihomo/mihomo
     chmod +x /opt/mihomo/mihomo
     
     # 安装前端界面
