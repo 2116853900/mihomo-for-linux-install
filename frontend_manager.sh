@@ -81,6 +81,50 @@ show_frontend_info() {
     echo ""
 }
 
+# 将前端压缩包解压到 $UI_DIR，并确保 index.html 位于 UI 根目录。
+# 压缩包顶层可能带子目录（如 dist/），需自动提升，否则 mihomo 访问 /ui/ 会 404。
+extract_frontend() {
+    local archive=$1
+    local extract_dir
+    extract_dir=$(mktemp -d)
+    local status=1
+
+    case "$archive" in
+        *.tgz|*.tar.gz)
+            tar -xzf "$archive" -C "$extract_dir" 2>/dev/null && status=0
+            ;;
+        *.zip)
+            unzip -q "$archive" -d "$extract_dir" 2>/dev/null && status=0
+            ;;
+        *)
+            log_error "不支持的前端压缩包格式: $archive"
+            rm -rf "$extract_dir"
+            return 1
+            ;;
+    esac
+
+    if [ "$status" -ne 0 ]; then
+        log_error "前端压缩包解压失败: $archive"
+        rm -rf "$extract_dir"
+        return 1
+    fi
+
+    if [ ! -f "$extract_dir/index.html" ]; then
+        local sub
+        sub=$(find "$extract_dir" -maxdepth 2 -name index.html 2>/dev/null | head -n1)
+        if [ -n "$sub" ]; then
+            mv "$(dirname "$sub")"/. "$UI_DIR"/
+        else
+            mv "$extract_dir"/. "$UI_DIR"/ 2>/dev/null || true
+        fi
+    else
+        mv "$extract_dir"/. "$UI_DIR"/
+    fi
+
+    rm -rf "$extract_dir"
+    return 0
+}
+
 # 下载并安装 MetaCubeXD
 install_metacubexd() {
     log_info "正在安装 MetaCubeXD 前端..."
@@ -106,9 +150,12 @@ install_metacubexd() {
     # 创建 UI 目录
     mkdir -p "$UI_DIR"
     
-    # 解压前端文件
+    # 解压前端文件（自动定位 index.html）
     log_info "解压 MetaCubeXD..."
-    tar -xzf metacubexd.tgz -C "$UI_DIR" --strip-components=1
+    if ! extract_frontend "$(pwd)/metacubexd.tgz"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
     
     # 记录前端信息
     echo "metacubexd" > "$UI_DIR/.frontend_info"
@@ -145,9 +192,12 @@ install_zashboard() {
     # 创建 UI 目录
     mkdir -p "$UI_DIR"
     
-    # 解压前端文件
+    # 解压前端文件（自动定位 index.html）
     log_info "解压 Zashboard..."
-    unzip -q zashboard.zip -d "$UI_DIR"
+    if ! extract_frontend "$(pwd)/zashboard.zip"; then
+        rm -rf "$temp_dir"
+        return 1
+    fi
     
     # 记录前端信息
     echo "zashboard" > "$UI_DIR/.frontend_info"

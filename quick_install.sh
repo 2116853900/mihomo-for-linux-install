@@ -453,6 +453,55 @@ choose_frontend() {
 }
 
 
+# 将前端压缩包解压到 $UI_DIR，并确保 index.html 位于 UI 根目录。
+# MetaCubeXD 的 tgz 与 Zashboard 的 zip 顶层可能带子目录，需自动提升，
+# 否则 mihomo 访问 /ui/ 会因找不到 index.html 而 404。
+extract_frontend() {
+    local archive=$1
+    local extract_dir
+    extract_dir=$(mktemp -d)
+    local status=1
+
+    case "$archive" in
+        *.tgz|*.tar.gz)
+            tar -xzf "$archive" -C "$extract_dir" 2>/dev/null && status=0
+            ;;
+        *.zip)
+            unzip -q "$archive" -d "$extract_dir" 2>/dev/null && status=0
+            ;;
+        *)
+            log_error "不支持的前端压缩包格式: $archive"
+            rm -rf "$extract_dir"
+            return 1
+            ;;
+    esac
+
+    if [ "$status" -ne 0 ]; then
+        log_error "前端压缩包解压失败: $archive"
+        rm -rf "$extract_dir"
+        return 1
+    fi
+
+    # 若 index.html 不在解压根目录，则把含 index.html 的子目录内容提升到根目录。
+    if [ ! -f "$extract_dir/index.html" ]; then
+        local sub
+        sub=$(find "$extract_dir" -maxdepth 2 -name index.html 2>/dev/null | head -n1)
+        if [ -n "$sub" ]; then
+            local sub_dir
+            sub_dir=$(dirname "$sub")
+            mv "$sub_dir"/. "$UI_DIR"/
+        else
+            # 没有明确 index.html，仍把解压内容整体搬入，避免空目录。
+            mv "$extract_dir"/. "$UI_DIR"/ 2>/dev/null || true
+        fi
+    else
+        mv "$extract_dir"/. "$UI_DIR"/
+    fi
+
+    rm -rf "$extract_dir"
+    return 0
+}
+
 # 安装 MetaCubeXD 前端
 install_metacubexd() {
     log_info "安装 MetaCubeXD 前端..."
@@ -460,7 +509,10 @@ install_metacubexd() {
     download_file "$download_url" "/tmp/ui.tgz"
     rm -rf /etc/mihomo/ui
     mkdir -p /etc/mihomo/ui
-    tar -xzf /tmp/ui.tgz -C /etc/mihomo/ui
+    if ! extract_frontend "/tmp/ui.tgz"; then
+        log_error "MetaCubeXD 前端安装失败"
+        return 1
+    fi
     echo "metacubexd" > /etc/mihomo/ui/.frontend_info
     echo "MetaCubeXD v1.189.0" > /etc/mihomo/ui/.frontend_version
     log_success "MetaCubeXD 前端安装完成"
@@ -473,7 +525,10 @@ install_zashboard() {
     download_file "$download_url" "/tmp/ui.zip"
     rm -rf /etc/mihomo/ui
     mkdir -p /etc/mihomo/ui
-    unzip -q /tmp/ui.zip -d /etc/mihomo/ui
+    if ! extract_frontend "/tmp/ui.zip"; then
+        log_error "Zashboard 前端安装失败"
+        return 1
+    fi
     echo "zashboard" > /etc/mihomo/ui/.frontend_info
     echo "Zashboard latest" > /etc/mihomo/ui/.frontend_version
     log_success "Zashboard 前端安装完成"
